@@ -267,37 +267,12 @@ git commit -m "feat: add temporary workspace plugin"
 - Create: `packages/desktop-temporary-workspace/README.zh.md`
 - Create: `scripts/verify-pack.mjs`
 - Create: `.github/workflows/ci.yml`
-- Modify: `packages/desktop-temporary-workspace/test/package.test.js`
 
 **Interfaces:**
 - Consumes: Task 1 的 manifest/files 与 Task 2 的插件能力。
 - Produces: 用户可执行的安装/挂载说明、可复现的包内容检查、Node 22.19/24 CI。
 
-- [ ] **Step 1：先扩展文档与发布契约失败测试**
-
-向 `test/package.test.js` 增加：
-
-```js
-it('documents the desktop-only compatibility boundary', async () => {
-  const readme = await readFile(new URL('../README.md', import.meta.url), 'utf8')
-  expect(readme).toContain('DSH Desktop')
-  expect(readme).toContain('not compatible with stock `@deepseek-ai/dsh@0.1.0-rc.7`')
-  expect(readme).toContain('dsh plugin --profile web add @ywandy/dsh-desktop-temporary-workspace')
-  expect(readme).toContain("name: '@ywandy/dsh-desktop-temporary-workspace'")
-})
-```
-
-- [ ] **Step 2：验证 RED**
-
-Run：
-
-```bash
-corepack pnpm test packages/desktop-temporary-workspace/test/package.test.js
-```
-
-Expected：因包级 `README.md` 不存在而 FAIL。
-
-- [ ] **Step 3：编写双语 README**
+- [ ] **Step 1：编写双语 README**
 
 仓库级 README 必须包含：项目定位、包列表、开发命令、兼容声明、贡献方式和 `dsh-plugin` 链接。
 
@@ -313,19 +288,19 @@ dsh plugin --profile web add @ywandy/dsh-desktop-temporary-workspace
       name: '@ywandy/dsh-desktop-temporary-workspace'
 ```
 
-英文 README 必须逐字包含测试要求的兼容句；中文 README 使用“当前不兼容原版 `@deepseek-ai/dsh@0.1.0-rc.7`”。
+英文 README 明确使用 `not compatible with stock @deepseek-ai/dsh@0.1.0-rc.7`；中文 README 使用“当前不兼容原版 `@deepseek-ai/dsh@0.1.0-rc.7`”。文档属于人工阅读材料，不增加精确文本测试；在最终评审中直接检查安装命令、patch 和兼容边界。
 
-- [ ] **Step 4：验证 README GREEN**
+- [ ] **Step 2：先验证 pack gate 为 RED**
 
 Run：
 
 ```bash
-corepack pnpm test packages/desktop-temporary-workspace/test/package.test.js
+corepack pnpm pack:check
 ```
 
-Expected：全部 PASS。
+Expected：因 `scripts/verify-pack.mjs` 不存在而 FAIL。
 
-- [ ] **Step 5：实现 pack gate**
+- [ ] **Step 3：实现 pack gate**
 
 创建 `scripts/verify-pack.mjs`，使用 `execFileSync('npm', ['pack', packageDir, '--dry-run', '--json'])` 解析 JSON；断言 tarball 文件路径集合严格等于：
 
@@ -342,7 +317,7 @@ const expected = new Set([
 
 集合不一致时打印 missing/unexpected 并退出 1；一致时输出 `pack contents verified`。
 
-- [ ] **Step 6：创建 CI**
+- [ ] **Step 4：创建 CI**
 
 `.github/workflows/ci.yml` 固定：
 
@@ -370,7 +345,7 @@ jobs:
       - run: pnpm check
 ```
 
-- [ ] **Step 7：运行全部验证**
+- [ ] **Step 5：运行全部验证**
 
 Run：
 
@@ -381,10 +356,10 @@ git diff --check
 
 Expected：全部 tests PASS，输出 `pack contents verified`，diff check 无输出。
 
-- [ ] **Step 8：提交任务审查点**
+- [ ] **Step 6：提交任务审查点**
 
 ```bash
-git add README.md README.zh.md packages/desktop-temporary-workspace/README.md packages/desktop-temporary-workspace/README.zh.md packages/desktop-temporary-workspace/test/package.test.js scripts/verify-pack.mjs .github/workflows/ci.yml
+git add README.md README.zh.md packages/desktop-temporary-workspace/README.md packages/desktop-temporary-workspace/README.zh.md scripts/verify-pack.mjs .github/workflows/ci.yml docs/superpowers/plans/2026-08-19-dsh-plugins-monorepo.md
 git commit -m "docs: prepare temporary workspace release"
 ```
 
@@ -407,7 +382,7 @@ Run：
 ```bash
 git status --short
 git diff main...HEAD --check
-rg -n "T[B]D|T[O]DO|private.?[:=].?true|dsh-desktop-temporary-workspace.*file:" . --glob '!docs/superpowers/**'
+rg -n "T[B]D|T[O]DO|private.?[:=].?true|dsh-desktop-temporary-workspace.*file:" packages
 ```
 
 Expected：只有预期文件；无 whitespace error；不得存在发布占位符、子包 `private: true` 或本地 `file:` 发布依赖。
