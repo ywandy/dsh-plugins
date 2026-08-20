@@ -9,18 +9,20 @@ Community plugins for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek
 | Package | Description | Compatibility |
 | --- | --- | --- |
 | [`@ywandy/dsh-desktop-temporary-workspace`](packages/desktop-temporary-workspace/README.md) | Creates ungrouped sessions that share a configurable default working directory, selected from the existing Workspace picker. | Unmodified DSH Desktop `origin/main` with `@deepseek-ai/dsh@0.1.0-rc.7` |
+| [`@ywandy/dsh-jizhi-bridge`](packages/jizhi-bridge/README.md) | Loads Jizhi workspace Markdown and writes Jizhi-compatible tool JSONL for model-visible DSH calls. | Unmodified DSH Desktop with `@deepseek-ai/dsh@0.1.0-rc.7` |
 
 ## Install
 
 ```sh
 dsh plugin --profile web add @ywandy/dsh-desktop-temporary-workspace
+dsh plugin --profile web add @ywandy/dsh-jizhi-bridge
 ```
 
 The package's `dsh.bundle` manifest mounts it automatically. See the package README for host compatibility and configuration details.
 
 ## Compatibility
 
-DeepSeek Harness is in developer preview and may make breaking changes. Every package documents its own verified host and peer dependency requirements. The default-workspace plugin is verified against the unmodified DSH Desktop `origin/main` composition using `@deepseek-ai/dsh@0.1.0-rc.7`.
+DeepSeek Harness is in developer preview and may make breaking changes. Every package documents its own verified host and peer dependency requirements. Both current plugins are verified against unmodified DSH Desktop compositions using `@deepseek-ai/dsh@0.1.0-rc.7`.
 
 ## Development
 
