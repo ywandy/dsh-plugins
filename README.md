@@ -8,11 +8,19 @@ Community plugins for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek
 
 | Package | Description | Compatibility |
 | --- | --- | --- |
-| [`@ywandy/dsh-desktop-temporary-workspace`](packages/desktop-temporary-workspace/README.md) | Creates persistent date-named directories only when a temporary task is first submitted. | DSH Desktop with the workspace-source and deferred-session extensions |
+| [`@ywandy/dsh-desktop-temporary-workspace`](packages/desktop-temporary-workspace/README.md) | Creates ungrouped sessions that share a configurable default working directory, selected from the existing Workspace picker. | Unmodified DSH Desktop `origin/main` with `@deepseek-ai/dsh@0.1.0-rc.7` |
+
+## Install
+
+```sh
+dsh plugin --profile web add @ywandy/dsh-desktop-temporary-workspace
+```
+
+The package's `dsh.bundle` manifest mounts it automatically. See the package README for host compatibility and configuration details.
 
 ## Compatibility
 
-DeepSeek Harness is in developer preview and may make breaking changes. Every package documents its own verified host and peer dependency requirements. The temporary workspace package currently depends on DSH Desktop extensions that are not present in the stock Harness release.
+DeepSeek Harness is in developer preview and may make breaking changes. Every package documents its own verified host and peer dependency requirements. The default-workspace plugin is verified against the unmodified DSH Desktop `origin/main` composition using `@deepseek-ai/dsh@0.1.0-rc.7`.
 
 ## Development
 
@@ -23,7 +31,7 @@ corepack pnpm install
 corepack pnpm check
 ```
 
-Each directory under `packages/` is an independent npm package. Add a bundle only when at least two plugins need a shared composition.
+Each directory under `packages/` is an independent npm package and may declare its own `dsh.bundle` installation manifest. Add an aggregate suite bundle only when at least two plugins need a shared composition.
 
 ## Community
 

@@ -1,16 +1,15 @@
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import vm from 'node:vm'
 import React from 'react'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   Config,
-  CREATE_PATH,
-  createTemporaryDirectory,
+  ENSURE_PATH,
   defaultRootDirectory,
-  formatDirectoryName,
-  handleCreateRequest,
+  ensureDefaultDirectory,
+  handleEnsureRequest,
   isTrustedRequest,
   normalizeRootDirectory,
   validateConfig
@@ -30,7 +29,7 @@ async function temporaryRoot() {
   return root
 }
 
-async function loadClientBundle(fetchImpl = async () => {
+async function loadClientRegistration(fetchImpl = async () => {
   throw new Error('unexpected fetch')
 }) {
   const source = await readFile(new URL('../client.js', import.meta.url), 'utf8')
@@ -50,6 +49,13 @@ async function loadClientBundle(fetchImpl = async () => {
   }
   vm.runInNewContext(source, { window, document, console }, { filename: 'client.js' })
   if (!registration) throw new Error('client bundle did not register')
+  return registration
+}
+
+async function loadClientBundle(fetchImpl = async () => {
+  throw new Error('unexpected fetch')
+}) {
+  const registration = await loadClientRegistration(fetchImpl)
   return registration.factory((id) => {
     if (id === 'react') return React
     throw new Error(`unexpected client dependency: ${id}`)
@@ -83,21 +89,64 @@ function response() {
   }
 }
 
-describe('temporary workspace directory naming', () => {
-  it('places temporary workspaces below the DSH home', () => {
+function createClientContextFixture(entries) {
+  const scope = {
+    getSnapshot: () => ({
+      status: 'ready',
+      value: { rootDirectory: '/tmp/workspaces' },
+      base: { rootDirectory: '/tmp/workspaces' },
+      user: undefined,
+      revision: 0,
+      writable: true,
+      mode: 'host'
+    }),
+    subscribe: () => () => {},
+    set: vi.fn(async () => {}),
+    unset: vi.fn(async () => {})
+  }
+  return {
+    slots: {
+      inject(_name, register) {
+        const result = register()
+        if (result && typeof result[Symbol.iterator] === 'function') {
+          for (const _disposer of result) void _disposer
+        }
+        return () => {}
+      },
+      register(options, component) {
+        entries.push({ options, component })
+        return () => {}
+      }
+    },
+    locale: {
+      register: vi.fn(() => () => {}),
+      bind: () => (key) => key
+    },
+    settingsScope: {
+      bind: ({ namespace }) => {
+        expect(namespace).toBe('desktop-temporary-workspace')
+        return scope
+      }
+    },
+    sessions: {
+      create: vi.fn(async () => 'session-1'),
+      open: vi.fn()
+    },
+    workspaces: {
+      pickDirectory: vi.fn(async () => null),
+      create: vi.fn(async ({ path: directory }) => ({ workspaceId: directory }))
+    },
+    effect: (install) => install()
+  }
+}
+
+describe('default workspace directory', () => {
+  it('places the shared default directory below DSH_HOME', () => {
     expect(defaultRootDirectory('/dsh-home')).toBe(
-      path.join('/dsh-home', 'temporary-workspaces')
+      path.join('/dsh-home', 'default-workspace')
     )
   })
 
-  it('formats directory names from local calendar fields', () => {
-    expect(formatDirectoryName(new Date(2026, 7, 19, 15, 30, 45))).toBe(
-      '20260819-153045'
-    )
-  })
-})
-
-describe('temporary workspace directory creation', () => {
   it('rejects empty and relative root paths', () => {
     expect(() => normalizeRootDirectory('  ')).toThrow('must not be empty')
     expect(() => normalizeRootDirectory('relative/path')).toThrow('must be absolute')
@@ -109,32 +158,34 @@ describe('temporary workspace directory creation', () => {
     )
   })
 
-  it('uses the -02 suffix for an existing timestamp directory', async () => {
-    const root = await temporaryRoot()
-    const now = new Date(2026, 7, 19, 15, 30, 45)
-    await mkdir(path.join(root, '20260819-153045'))
+  it('ensures and reuses one normalized directory', async () => {
+    const directory = path.join(await temporaryRoot(), 'shared', '..', 'default')
 
-    expect(await createTemporaryDirectory(root, now)).toBe(
-      path.join(root, '20260819-153045-02')
-    )
+    const first = await ensureDefaultDirectory(directory)
+    const second = await ensureDefaultDirectory(directory)
+
+    expect(first).toBe(path.normalize(directory))
+    expect(second).toBe(first)
+    expect((await stat(first)).isDirectory()).toBe(true)
   })
 
-  it('creates different directories for concurrent requests', async () => {
-    const root = await temporaryRoot()
-    const now = new Date(2026, 7, 19, 15, 30, 45)
+  it('returns one directory for concurrent ensure calls', async () => {
+    const directory = path.join(await temporaryRoot(), 'default')
 
-    const created = await Promise.all([
-      createTemporaryDirectory(root, now),
-      createTemporaryDirectory(root, now)
+    const ensured = await Promise.all([
+      ensureDefaultDirectory(directory),
+      ensureDefaultDirectory(directory)
     ])
 
-    expect(new Set(created).size).toBe(2)
-    expect((await stat(created[0])).isDirectory()).toBe(true)
-    expect((await stat(created[1])).isDirectory()).toBe(true)
+    expect(new Set(ensured)).toEqual(new Set([path.normalize(directory)]))
   })
 })
 
-describe('temporary workspace create route', () => {
+describe('default workspace ensure route', () => {
+  it('uses the fixed same-origin endpoint', () => {
+    expect(ENSURE_PATH).toBe('/dsh-desktop/default-workspace/ensure')
+  })
+
   it('accepts same-origin loopback requests only', () => {
     expect(isTrustedRequest(request(), true)).toBe(true)
     expect(
@@ -146,41 +197,39 @@ describe('temporary workspace create route', () => {
     expect(isTrustedRequest(request({}, '192.168.1.5'), true)).toBe(false)
   })
 
-  it('rejects non-POST methods before creating a directory', async () => {
-    const root = path.join(await temporaryRoot(), 'root')
+  it('rejects non-POST methods before touching the directory', async () => {
+    const directory = path.join(await temporaryRoot(), 'default')
     const res = response()
 
-    await handleCreateRequest(request({}, '127.0.0.1', 'GET'), res, () => root)
+    await handleEnsureRequest(request({}, '127.0.0.1', 'GET'), res, () => directory)
 
     expect(res.status).toBe(405)
     expect(JSON.parse(res.body)).toEqual({ error: 'Method not allowed.' })
-    await expect(stat(root)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(stat(directory)).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
-  it('creates below the configured root and ignores caller path data', async () => {
+  it('ensures the configured directory and ignores caller path data', async () => {
     const parent = await temporaryRoot()
-    const root = path.join(parent, 'configured')
+    const configured = path.join(parent, 'configured')
     const res = response()
     const req = request()
-    req.body = { rootDirectory: path.join(parent, 'attacker-controlled') }
+    req.body = { rootDirectory: path.join(parent, 'caller-controlled') }
 
-    await handleCreateRequest(req, res, () => root, new Date(2026, 7, 19, 15, 30, 45))
+    await handleEnsureRequest(req, res, () => configured)
 
-    expect(res.status).toBe(201)
-    expect(JSON.parse(res.body)).toEqual({
-      path: path.join(root, '20260819-153045')
-    })
-    expect((await stat(path.join(root, '20260819-153045'))).isDirectory()).toBe(true)
+    expect(res.status).toBe(200)
+    expect(JSON.parse(res.body)).toEqual({ path: configured })
+    expect((await stat(configured)).isDirectory()).toBe(true)
     await expect(stat(req.body.rootDirectory)).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
-  it('returns a structured error when the configured root cannot be created', async () => {
+  it('returns a structured error when the configured directory is a file', async () => {
     const parent = await temporaryRoot()
-    const root = path.join(parent, 'occupied')
-    await writeFile(root, 'not a directory')
+    const directory = path.join(parent, 'occupied')
+    await writeFile(directory, 'not a directory')
     const res = response()
 
-    await handleCreateRequest(request(), res, () => root)
+    await handleEnsureRequest(request(), res, () => directory)
 
     expect(res.status).toBe(500)
     expect(JSON.parse(res.body)).toMatchObject({ error: expect.any(String) })
@@ -198,119 +247,128 @@ describe('temporary workspace host configuration', () => {
     )
   })
 
-  it('uses a fixed same-origin create endpoint', () => {
-    expect(CREATE_PATH).toBe('/dsh-desktop/temporary-workspace/create')
-  })
 })
 
 describe('temporary workspace client plugin', () => {
-  it('returns the created absolute path from the Host endpoint', async () => {
-    const client = await loadClientBundle()
-    const fetchImpl = async () => ({
-      ok: true,
-      status: 201,
-      json: async () => ({ path: '/tmp/20260819-153045' })
-    })
+  it('registers the Client bundle under the npm package id', async () => {
+    const registration = await loadClientRegistration()
 
-    await expect(client.createTemporaryWorkspace(fetchImpl)).resolves.toBe(
-      '/tmp/20260819-153045'
-    )
+    expect(registration.id).toBe('@ywandy/dsh-desktop-temporary-workspace')
   })
 
-  it('rejects Host errors and malformed success payloads', async () => {
+  it('ensures the shared directory through the fixed Host endpoint', async () => {
+    const calls = []
+    const client = await loadClientBundle()
+    const ensuredPath = await client.ensureDefaultWorkspace(async (...args) => {
+      calls.push(args)
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ path: '/tmp/default-workspace' })
+      }
+    })
+
+    expect(ensuredPath).toBe('/tmp/default-workspace')
+    expect(calls).toEqual([[
+      '/dsh-desktop/default-workspace/ensure',
+      { method: 'POST', headers: { accept: 'application/json' } }
+    ]])
+  })
+
+  it('rejects Host errors and malformed Ensure success payloads', async () => {
     const client = await loadClientBundle()
 
     await expect(
-      client.createTemporaryWorkspace(async () => ({
+      client.ensureDefaultWorkspace(async () => ({
         ok: false,
         status: 500,
         json: async () => ({ error: 'disk is read-only' })
       }))
     ).rejects.toThrow('disk is read-only')
     await expect(
-      client.createTemporaryWorkspace(async () => ({
+      client.ensureDefaultWorkspace(async () => ({
         ok: true,
-        status: 201,
+        status: 200,
         json: async () => ({})
       }))
     ).rejects.toThrow('did not contain a path')
   })
 
-  it('registers ordered sources and the keyed settings card', async () => {
+  it('registers locale dictionaries and the settings card', async () => {
+    const client = await loadClientBundle()
+    const entries = []
+    const ctx = createClientContextFixture(entries)
+
+    client.apply(ctx)
+
+    const dictionaryCall = ctx.locale.register.mock.calls.find(
+      ([namespace]) => namespace === 'desktop.temporaryWorkspace'
+    )
+    expect(dictionaryCall).toBeDefined()
+    const dictionaries = dictionaryCall[1]
+    expect(dictionaries.zh).toMatchObject({
+      defaultWorkspace: '默认执行目录',
+      settingsTitle: '默认执行目录',
+      rootDirectory: '默认执行目录'
+    })
+    expect(dictionaries.en).toMatchObject({
+      defaultWorkspace: 'Default workspace',
+      settingsTitle: 'Default workspace',
+      rootDirectory: 'Default workspace directory'
+    })
+
+    expect(entries.some((entry) =>
+      entry.options.name === 'settings.plugin.item' &&
+      entry.options.key === 'desktop-temporary-workspace'
+    )).toBe(true)
+  })
+
+  it('registers the default directory as one deferred source on both workspace surfaces', async () => {
     const fetchCalls = []
     const client = await loadClientBundle(async (...args) => {
       fetchCalls.push(args)
       return {
         ok: true,
-        status: 201,
-        json: async () => ({ path: '/tmp/temporary-workspace' })
+        status: 200,
+        json: async () => ({ path: '/tmp/default-workspace' })
       }
     })
     const entries = []
-    const scope = {
-      getSnapshot: () => ({
-        status: 'ready',
-        value: { rootDirectory: '/tmp/workspaces' },
-        base: { rootDirectory: '/tmp/workspaces' },
-        user: undefined,
-        revision: 0,
-        writable: true,
-        mode: 'host'
-      }),
-      subscribe: () => () => {},
-      set: async () => {},
-      unset: async () => {}
-    }
-    const slots = {
-      inject(_name, register) {
-        const result = register()
-        if (result && typeof result[Symbol.iterator] === 'function') {
-          for (const _entry of result) void _entry
-        }
-        return () => {}
-      },
-      register(options, component) {
-        entries.push({ options, component })
-        return () => {}
-      }
-    }
-    const ctx = {
-      slots,
-      locale: {
-        register: () => () => {},
-        bind: () => (key) => key
-      },
-      settingsScope: {
-        bind: ({ namespace }) => {
-          expect(namespace).toBe('desktop-temporary-workspace')
-          return scope
-        }
-      },
-      effect: (install) => install()
-    }
+    const ctx = createClientContextFixture(entries)
 
     client.apply(ctx)
 
-    const sources = entries.filter((entry) => entry.options.id === 'temporary')
-    expect(sources.map((entry) => entry.options.name).sort()).toEqual([
-      'conversation.hero.workspace.createSource',
-      'sidebar.workspaces.createSource'
+    const sources = entries.filter((entry) =>
+      entry.options.name.endsWith('.createSource')
+    )
+    expect(sources.map(({ options }) => ({
+      name: options.name,
+      id: options.id,
+      activation: options.activation,
+      label: options.label()
+    }))).toEqual([
+      {
+        name: 'conversation.hero.workspace.createSource',
+        id: 'default',
+        activation: 'submit',
+        label: 'defaultWorkspace'
+      },
+      {
+        name: 'sidebar.workspaces.createSource',
+        id: 'default',
+        activation: 'submit',
+        label: 'defaultWorkspace'
+      }
     ])
-    expect(sources.every((entry) => entry.options.order === 10)).toBe(true)
-    expect(sources.every((entry) => entry.options.activation === 'submit')).toBe(true)
-    expect(sources.every((entry) => typeof entry.options.create === 'function')).toBe(true)
-    expect(sources.every((entry) => typeof entry.options.inject === 'function')).toBe(true)
-    const productionMetadata = sources[0].options.inject()
-    expect(productionMetadata.activation).toBe('submit')
-    expect(productionMetadata.create).toBeTypeOf('function')
-    expect(fetchCalls).toHaveLength(0)
-    expect(sources[0].component({ open: true })).toBeNull()
-    expect(fetchCalls).toHaveLength(0)
-    await expect(productionMetadata.create()).resolves.toBe('/tmp/temporary-workspace')
-    expect(fetchCalls).toHaveLength(1)
-    expect(entries.some((entry) =>
-      entry.options.name === 'settings.plugin.item' &&
-      entry.options.key === 'desktop-temporary-workspace'
-    )).toBe(true)
+
+    await expect(sources[0].options.create()).resolves.toBe(
+      '/tmp/default-workspace'
+    )
+    expect(fetchCalls).toEqual([[
+      '/dsh-desktop/default-workspace/ensure',
+      { method: 'POST', headers: { accept: 'application/json' } }
+    ]])
+    expect(ctx.sessions.create).not.toHaveBeenCalled()
+    expect(ctx.sessions.open).not.toHaveBeenCalled()
   })
 })

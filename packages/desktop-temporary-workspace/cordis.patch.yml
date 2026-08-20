@@ -1,0 +1,3 @@
+- insert:
+    - id: dsh-desktop-temporary-workspace
+      name: '@ywandy/dsh-desktop-temporary-workspace'

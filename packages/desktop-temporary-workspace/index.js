@@ -6,7 +6,7 @@ import { installSettingsSection, settingsNamespace } from '@deepseek-ai/dsh-sett
 
 export const name = 'dsh-desktop-temporary-workspace'
 export const inject = ['webServer']
-export const CREATE_PATH = '/dsh-desktop/temporary-workspace/create'
+export const ENSURE_PATH = '/dsh-desktop/default-workspace/ensure'
 export const SETTINGS_NAMESPACE = settingsNamespace('desktop-temporary-workspace')
 
 function dshHome() {
@@ -14,22 +14,14 @@ function dshHome() {
 }
 
 export function defaultRootDirectory(home = dshHome()) {
-  return path.join(home, 'temporary-workspaces')
-}
-
-function pad(value) {
-  return String(value).padStart(2, '0')
-}
-
-export function formatDirectoryName(date) {
-  return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}-${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`
+  return path.join(home, 'default-workspace')
 }
 
 export function normalizeRootDirectory(value, pathApi = path) {
   const trimmed = value.trim()
-  if (!trimmed) throw new Error('temporary workspace root must not be empty')
+  if (!trimmed) throw new Error('default workspace directory must not be empty')
   if (!pathApi.isAbsolute(trimmed)) {
-    throw new Error('temporary workspace root must be absolute')
+    throw new Error('default workspace directory must be absolute')
   }
   return pathApi.normalize(pathApi.resolve(trimmed))
 }
@@ -42,21 +34,10 @@ export const Config = z.object({
   rootDirectory: z.string().default(defaultRootDirectory())
 })
 
-export async function createTemporaryDirectory(root, now = new Date()) {
-  const normalizedRoot = normalizeRootDirectory(root)
-  await mkdir(normalizedRoot, { recursive: true })
-  const base = formatDirectoryName(now)
-
-  for (let attempt = 1; ; attempt += 1) {
-    const name = attempt === 1 ? base : `${base}-${pad(attempt)}`
-    const target = path.join(normalizedRoot, name)
-    try {
-      await mkdir(target)
-      return target
-    } catch (error) {
-      if (error?.code !== 'EEXIST') throw error
-    }
-  }
+export async function ensureDefaultDirectory(directory) {
+  const normalized = normalizeRootDirectory(directory)
+  await mkdir(normalized, { recursive: true })
+  return normalized
 }
 
 function isLoopback(address) {
@@ -101,7 +82,7 @@ function sendJson(res, status, payload) {
   res.end(body)
 }
 
-export async function handleCreateRequest(req, res, rootDirectory, now = new Date()) {
+export async function handleEnsureRequest(req, res, rootDirectory) {
   if (req.method !== 'POST') {
     sendJson(res, 405, { error: 'Method not allowed.' })
     return
@@ -112,8 +93,8 @@ export async function handleCreateRequest(req, res, rootDirectory, now = new Dat
   }
 
   try {
-    const created = await createTemporaryDirectory(rootDirectory(), now)
-    sendJson(res, 201, { path: created })
+    const ensured = await ensureDefaultDirectory(rootDirectory())
+    sendJson(res, 200, { path: ensured })
   } catch (error) {
     sendJson(res, 500, { error: error instanceof Error ? error.message : String(error) })
   }
@@ -134,10 +115,10 @@ export function apply(ctx, config) {
     () =>
       ctx.webServer.register({
         kind: 'exact',
-        path: CREATE_PATH,
+        path: ENSURE_PATH,
         handler: (req, res) =>
-          handleCreateRequest(req, res, () => source().rootDirectory)
+          handleEnsureRequest(req, res, () => source().rootDirectory)
       }),
-    'dsh-desktop-temporary-workspace: create route'
+    'dsh-desktop-temporary-workspace: ensure route'
   )
 }

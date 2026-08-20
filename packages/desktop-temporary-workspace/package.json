@@ -1,7 +1,7 @@
 {
   "name": "@ywandy/dsh-desktop-temporary-workspace",
-  "version": "0.1.0",
-  "description": "DSH Desktop workspace source for persistent date-named temporary directories.",
+  "version": "0.3.0",
+  "description": "Adds a deferred default workspace backed by a shared configurable working directory.",
   "private": false,
   "type": "module",
   "main": "./index.js",
@@ -13,6 +13,7 @@
   "files": [
     "index.js",
     "client.js",
+    "cordis.patch.yml",
     "README.md",
     "README.zh.md",
     "LICENSE"
@@ -39,6 +40,9 @@
     "node": ">=22.19"
   },
   "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
     "client": {
       "inject": [
         "@deepseek-ai/dsh-client-locale",

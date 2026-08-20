@@ -13,6 +13,7 @@ const expected = new Set([
   'README.md',
   'README.zh.md',
   'client.js',
+  'cordis.patch.yml',
   'index.js',
   'package.json'
 ])

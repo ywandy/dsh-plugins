@@ -1,5 +1,5 @@
 window.__ModuleLoader__.load({
-  id: 'dsh-desktop-temporary-workspace',
+  id: '@ywandy/dsh-desktop-temporary-workspace',
   factory: (require) => {
     const module = { exports: {} }
     const exports = module.exports
@@ -8,14 +8,14 @@ window.__ModuleLoader__.load({
 
     const NS = 'desktop.temporaryWorkspace'
     const SETTINGS_NAMESPACE = 'desktop-temporary-workspace'
-    const CREATE_PATH = '/dsh-desktop/temporary-workspace/create'
+    const ENSURE_PATH = '/dsh-desktop/default-workspace/ensure'
 
     const zh = {
-      temporaryWorkspace: '临时工作区',
-      settingsTitle: '临时工作区',
-      settingsDescription: '无需预先准备项目目录。新目录按本地日期时间命名，并永久保留。',
-      rootDirectory: '临时工作区根目录',
-      rootDirectoryHint: '配置只影响后续创建；保存时不会移动或创建目录。',
+      defaultWorkspace: '默认执行目录',
+      settingsTitle: '默认执行目录',
+      settingsDescription: '无需选择项目即可创建独立任务；所有默认会话共享同一目录。',
+      rootDirectory: '默认执行目录',
+      rootDirectoryHint: '修改只影响后续会话，不会移动或清理已有文件。',
       save: '保存',
       saving: '正在保存…',
       reset: '恢复默认值',
@@ -24,11 +24,11 @@ window.__ModuleLoader__.load({
     }
 
     const en = {
-      temporaryWorkspace: 'Temporary workspace',
-      settingsTitle: 'Temporary workspace',
-      settingsDescription: 'Start without preparing a project folder. New date-named directories are kept permanently.',
-      rootDirectory: 'Temporary workspace root',
-      rootDirectoryHint: 'This affects future workspaces only. Saving does not move or create directories.',
+      defaultWorkspace: 'Default workspace',
+      settingsTitle: 'Default workspace',
+      settingsDescription: 'Start independent tasks without choosing a project. All default sessions share one directory.',
+      rootDirectory: 'Default workspace directory',
+      rootDirectoryHint: 'Changes affect future sessions only and never move or remove existing files.',
       save: 'Save',
       saving: 'Saving…',
       reset: 'Restore default',
@@ -62,8 +62,8 @@ window.__ModuleLoader__.load({
       document.head.appendChild(style)
     }
 
-    async function createTemporaryWorkspace(fetchImpl = (...args) => window.fetch(...args)) {
-      const response = await fetchImpl(CREATE_PATH, {
+    async function ensureDefaultWorkspace(fetchImpl = (...args) => window.fetch(...args)) {
+      const response = await fetchImpl(ENSURE_PATH, {
         method: 'POST',
         headers: { accept: 'application/json' }
       })
@@ -77,17 +77,13 @@ window.__ModuleLoader__.load({
         throw new Error(
           typeof payload?.error === 'string' && payload.error !== ''
             ? payload.error
-            : `Temporary workspace request failed (${response.status})`
+            : `Default workspace request failed with ${response.status}.`
         )
       }
-      if (!payload || typeof payload.path !== 'string' || payload.path === '') {
-        throw new Error('Temporary workspace response did not contain a path')
+      if (typeof payload?.path !== 'string' || payload.path === '') {
+        throw new Error('Default workspace response did not contain a path.')
       }
       return payload.path
-    }
-
-    function TemporaryWorkspaceSource() {
-      return null
     }
 
     function TemporaryWorkspaceSettingsCard({ scope, t }) {
@@ -205,29 +201,25 @@ window.__ModuleLoader__.load({
       )
       const t = ctx.locale.bind(NS)
       const scope = ctx.settingsScope.bind({ namespace: SETTINGS_NAMESPACE })
-      const sourceOptions = (name) => ({
+      const source = (name) => ({
         name,
-        id: 'temporary',
+        id: 'default',
         order: 10,
         activation: 'submit',
-        create: () => createTemporaryWorkspace(),
-        label: () => t('temporaryWorkspace'),
-        inject: () => ({
-          activation: 'submit',
-          create: () => createTemporaryWorkspace()
-        })
+        create: () => ensureDefaultWorkspace(),
+        label: () => t('defaultWorkspace')
       })
 
       ctx.slots.inject(
         'conversation.hero.workspace.createSource',
         () => ctx.slots.inject('sidebar.workspaces.createSource', function* () {
           yield ctx.slots.register(
-            sourceOptions('conversation.hero.workspace.createSource'),
-            TemporaryWorkspaceSource
+            source('conversation.hero.workspace.createSource'),
+            () => null
           )
           yield ctx.slots.register(
-            sourceOptions('sidebar.workspaces.createSource'),
-            TemporaryWorkspaceSource
+            source('sidebar.workspaces.createSource'),
+            () => null
           )
         })
       )
@@ -247,8 +239,7 @@ window.__ModuleLoader__.load({
 
     exports.apply = apply
     exports.inject = inject
-    exports.createTemporaryWorkspace = createTemporaryWorkspace
-    exports.TemporaryWorkspaceSource = TemporaryWorkspaceSource
+    exports.ensureDefaultWorkspace = ensureDefaultWorkspace
     exports.TemporaryWorkspaceSettingsCard = TemporaryWorkspaceSettingsCard
     return module.exports
   }

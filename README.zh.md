@@ -8,11 +8,19 @@
 
 | 包 | 功能 | 兼容范围 |
 | --- | --- | --- |
-| [`@ywandy/dsh-desktop-temporary-workspace`](packages/desktop-temporary-workspace/README.zh.md) | 仅在临时任务首次发送时创建按日期时间命名且永久保留的目录。 | 带工作区来源和延迟 Session 扩展的 DSH Desktop |
+| [`@ywandy/dsh-desktop-temporary-workspace`](packages/desktop-temporary-workspace/README.zh.md) | 从现有 Workspace 选择器创建共用可配置默认执行目录的未分组 Session。 | 使用 `@deepseek-ai/dsh@0.1.0-rc.7` 的未修改 DSH Desktop `origin/main` |
+
+## 安装
+
+```sh
+dsh plugin --profile web add @ywandy/dsh-desktop-temporary-workspace
+```
+
+包内的 `dsh.bundle` manifest 会自动挂载插件。宿主兼容范围和配置方式见包级 README。
 
 ## 兼容性
 
-DeepSeek Harness 当前处于开发者预览阶段，可能发生破坏性变更。每个包会单独声明经过验证的宿主和 peer dependency 要求。临时工作区插件目前依赖 DSH Desktop 扩展，原版 Harness 尚未提供这些能力。
+DeepSeek Harness 当前处于开发者预览阶段，可能发生破坏性变更。每个包会单独声明经过验证的宿主和 peer dependency 要求。默认执行目录插件已在使用 `@deepseek-ai/dsh@0.1.0-rc.7` 的未修改 DSH Desktop `origin/main` 组合上验证。
 
 ## 开发
 
@@ -23,7 +31,7 @@ corepack pnpm install
 corepack pnpm check
 ```
 
-`packages/` 下的每个目录都是独立 npm 包。只有出现至少两个需要统一组合的插件时，才新增 Bundle。
+`packages/` 下的每个目录都是独立 npm 包，并可声明自己的 `dsh.bundle` 安装清单。只有出现至少两个需要统一组合的插件时，才新增聚合 Suite Bundle。
 
 ## 社区发现
 
