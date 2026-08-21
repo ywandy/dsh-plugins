@@ -22,6 +22,7 @@ Bundle patch 会自动挂载 Host 插件；本包不包含 Client bundle 或设�
 - 注册 DSH 标准 `skill` Provider，读取容器内 `/agent/skills` 的系统技能和 `/agent/user/<net>/<user>/user_skills` 的用户技能。
 - 从形如 `/agent/user/<net>/<user>/workspace/...` 的 Session `cwd` 提取 `net/user`；同名技能以系统目录为准。
 - 技能摘要由 DSH 按 cwd 缓存，只有模型调用 `skill` 时才加载完整 `SKILL.md`；挂载文件变化由 watcher 触发 catalog invalidate，不按每个 Agent Loop 强制扫描。
+- 作为临时兼容层，插件会把 Host credential provider 中非空的 `OPENAI_API_KEY` 和 `OPENAI_BASE_URL` 通过显式环境变量转发给所有 DSH 子进程。这覆盖普通 spawn、terminal、bash、LSP 及其他子进程调用方，不修改 Harness 的 ambient-env scrub 规则。移除或禁用本插件即可停止转发；启用期间，使用该插件的任何子进程都可能读取这些变量。
 
 插件永远不会创建 `.jizhiagent/`。未进入 DSH 模型历史的 Code Mode 内部 dispatch 不会生成独立文件。
 

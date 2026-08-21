@@ -77,6 +77,30 @@ function hostFixture() {
   const sections = new Map()
   const variables = new Map()
   const skillRegistrations = []
+  const effects = []
+  const credentialValues = {
+    OPENAI_API_KEY: 'key-v1',
+    OPENAI_BASE_URL: 'https://proxy.example/v1'
+  }
+  const credentials = {
+    values: credentialValues,
+    resolve: vi.fn(async (ref) => {
+      const value = credentialValues[ref]
+      return value === undefined ? undefined : { value, source: 'memory' }
+    })
+  }
+  const spawnCalls = []
+  const terminalCalls = []
+  const subprocess = {
+    spawn(spec) {
+      spawnCalls.push(spec)
+      return { kind: 'process', spec }
+    },
+    async spawnTerminal(spec) {
+      terminalCalls.push(spec)
+      return { kind: 'terminal', spec }
+    }
+  }
   const skills = {
     registerProvider: vi.fn((factory) => {
       const lifecycle = new AbortController()
@@ -92,6 +116,8 @@ function hostFixture() {
   const ctx = {
     attachments: { readImage: vi.fn() },
     logger: { warn: vi.fn() },
+    credentials,
+    subprocess,
     skills,
     systemPrompt: {
       section: vi.fn((section) => {
@@ -106,9 +132,28 @@ function hostFixture() {
     on(eventName, handler) {
       handlers.set(eventName, handler)
       return () => handlers.delete(eventName)
+    },
+    effect(factory) {
+      const cleanup = factory()
+      effects.push(cleanup)
+      return cleanup
     }
   }
-  return { ctx, handlers, sections, variables, skillRegistrations }
+  return {
+    ctx,
+    handlers,
+    sections,
+    variables,
+    skillRegistrations,
+    credentials,
+    subprocess,
+    spawnCalls,
+    terminalCalls,
+    effects,
+    cleanup() {
+      for (const effect of effects.splice(0).reverse()) effect?.()
+    }
+  }
 }
 
 describe('Jizhi workspace Markdown snapshot', () => {
@@ -499,12 +544,12 @@ describe('Jizhi mounted skill provider', () => {
 })
 
 describe('Jizhi bridge Host plugin', () => {
-  it('registers one Host-only prompt section and literal brace variable', () => {
+  it('registers one Host-only prompt section and literal brace variable', async () => {
     const fixture = hostFixture()
-    apply(fixture.ctx)
+    await apply(fixture.ctx)
 
     expect(name).toBe('dsh-jizhi-bridge')
-    expect(inject).toEqual(['systemPrompt', 'attachments', 'skills'])
+    expect(inject).toEqual(['systemPrompt', 'attachments', 'skills', 'credentials', 'subprocess'])
     expect(fixture.ctx.skills.registerProvider).toHaveBeenCalledOnce()
     expect(fixture.skillRegistrations[0].provider.name).toBe('jizhi-mounted-skills')
     expect(fixture.sections.get('jizhi:workspace').order).toBe(50)
@@ -513,13 +558,49 @@ describe('Jizhi bridge Host plugin', () => {
     expect(fixture.handlers.has('agent/inbox/claimed')).toBe(true)
   })
 
+  it('forwards refreshed credentials to both subprocess seams and restores them on dispose', async () => {
+    const fixture = hostFixture()
+    const originalSpawn = fixture.subprocess.spawn
+    const originalSpawnTerminal = fixture.subprocess.spawnTerminal
+
+    await apply(fixture.ctx)
+    fixture.subprocess.spawn({ argv: ['bash'], env: { KEEP: 'yes' } })
+    await fixture.subprocess.spawnTerminal({ argv: ['bash'], env: { KEEP: 'yes' } })
+    expect(fixture.spawnCalls[0].env).toEqual({
+      KEEP: 'yes',
+      OPENAI_API_KEY: 'key-v1',
+      OPENAI_BASE_URL: 'https://proxy.example/v1'
+    })
+    expect(fixture.terminalCalls[0].env).toEqual({
+      KEEP: 'yes',
+      OPENAI_API_KEY: 'key-v1',
+      OPENAI_BASE_URL: 'https://proxy.example/v1'
+    })
+
+    fixture.credentials.values.OPENAI_API_KEY = 'key-v2'
+    fixture.credentials.values.OPENAI_BASE_URL = 'https://proxy.example/v2'
+    fixture.handlers.get('credentials/updated')()
+    await vi.waitFor(() => expect(fixture.credentials.resolve).toHaveBeenCalledTimes(4))
+    fixture.subprocess.spawn({ argv: ['bash'] })
+    expect(fixture.spawnCalls[1].env).toEqual({
+      OPENAI_API_KEY: 'key-v2',
+      OPENAI_BASE_URL: 'https://proxy.example/v2'
+    })
+
+    fixture.cleanup()
+    expect(fixture.subprocess.spawn).toBe(originalSpawn)
+    expect(fixture.subprocess.spawnTerminal).toBe(originalSpawnTerminal)
+    fixture.subprocess.spawn({ argv: ['bash'] })
+    expect(fixture.spawnCalls[2].env).toBeUndefined()
+  })
+
   it('refreshes before the first request once per claimed real user message', async () => {
     const root = await temporaryRoot()
     const systemDir = path.join(root, '.jizhiagent')
     await mkdir(systemDir)
     await writeFile(path.join(systemDir, 'SUMMARY.md'), 'version one')
     const fixture = hostFixture()
-    apply(fixture.ctx)
+    await apply(fixture.ctx)
     const agent = { session: { header: { cwd: root } } }
     const claimed = fixture.handlers.get('agent/inbox/claimed')
     const section = fixture.sections.get('jizhi:workspace')
@@ -537,7 +618,7 @@ describe('Jizhi bridge Host plugin', () => {
   it('keeps an ordinary workspace prompt empty', async () => {
     const root = await temporaryRoot()
     const fixture = hostFixture()
-    apply(fixture.ctx)
+    await apply(fixture.ctx)
     const agent = { session: { header: { cwd: root } } }
 
     fixture.handlers.get('agent/inbox/claimed')({
@@ -551,7 +632,7 @@ describe('Jizhi bridge Host plugin', () => {
     const root = await temporaryRoot()
     await mkdir(path.join(root, '.jizhiagent'))
     const fixture = hostFixture()
-    apply(fixture.ctx)
+    await apply(fixture.ctx)
     const session = { header: { cwd: root }, events: [] }
     const call = toolCallEvent('integrated', 'shell', '{"cmd":"pwd"}')
     const result = toolResultEvent('integrated', [{ type: 'text', text: root }])
