@@ -9,7 +9,7 @@
 | 包 | 功能 | 兼容范围 |
 | --- | --- | --- |
 | [`@ywandy/dsh-desktop-temporary-workspace`](packages/desktop-temporary-workspace/README.zh.md) | 从现有 Workspace 选择器创建共用可配置默认执行目录的未分组 Session。 | 使用 `@deepseek-ai/dsh@0.1.0-rc.7` 的未修改 DSH Desktop `origin/main` |
-| [`@ywandy/dsh-jizhi-bridge`](packages/jizhi-bridge/README.zh.md) | 加载极智工作区 Markdown，并为 DSH 模型可见工具调用写入极智兼容 JSONL。 | 使用 `@deepseek-ai/dsh@0.1.0-rc.7` 的未修改 DSH Desktop |
+| [`@ywandy/dsh-jizhi-bridge`](packages/jizhi-bridge/README.zh.md) | 加载极智工作区 Markdown、暴露多根挂载 Skill，并为 DSH 模型可见工具调用写入极智兼容 JSONL。 | 使用 `@deepseek-ai/dsh@0.1.0-rc.7` 的未修改 DSH Desktop |
 
 ## 安装
 

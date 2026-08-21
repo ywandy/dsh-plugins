@@ -1,13 +1,24 @@
 import { refreshWorkspaceSnapshot } from './lib/workspace-markdown.js'
+import { createJizhiSkillProvider } from './lib/skill-provider.js'
 import { createToolJsonlBridge } from './lib/tool-jsonl.js'
 
 export const name = 'dsh-jizhi-bridge'
-export const inject = ['systemPrompt', 'attachments']
+export const inject = ['systemPrompt', 'attachments', 'skills']
 
 export function apply(ctx) {
   const snapshots = new WeakMap()
   const warn = (message) => ctx.logger.warn(message)
   const toolJsonl = createToolJsonlBridge({ attachments: ctx.attachments, warn })
+
+  if (ctx.skills?.registerProvider) {
+    ctx.skills.registerProvider((control) => createJizhiSkillProvider({
+      invalidate: control.invalidate,
+      signal: control.signal,
+      warn
+    }))
+  } else {
+    warn('jizhi bridge: DSH skill registry is unavailable; mounted skills disabled')
+  }
 
   ctx.systemPrompt.variable('jizhi_open', () => '{{')
   ctx.systemPrompt.section({

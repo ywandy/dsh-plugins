@@ -8,6 +8,8 @@ import { describe, expect, it } from 'vitest'
 const packageDirectoryUrl = new URL('../', import.meta.url)
 const manifestUrl = new URL('package.json', packageDirectoryUrl)
 const patchUrl = new URL('cordis.patch.yml', packageDirectoryUrl)
+const readmeUrl = new URL('README.md', packageDirectoryUrl)
+const readmeZhUrl = new URL('README.zh.md', packageDirectoryUrl)
 const repositoryRoot = fileURLToPath(new URL('../../../', import.meta.url))
 const execFileAsync = promisify(execFile)
 
@@ -47,8 +49,12 @@ describe('jizhi bridge published package', () => {
       '@deepseek-ai/cordis': '^4.0.1',
       '@deepseek-ai/dsh-agent': '^0.1.0-rc.7',
       '@deepseek-ai/dsh-attachment': '^0.1.0-rc.7',
+      '@deepseek-ai/dsh-skill': '^0.1.0-rc.7',
       '@deepseek-ai/dsh-session': '^0.1.0-rc.7',
       '@deepseek-ai/dsh-system-prompt': '^0.1.0-rc.7'
+    })
+    expect(manifest.dependencies).toEqual({
+      'js-yaml': '^4.3.1'
     })
   })
 
@@ -58,6 +64,21 @@ describe('jizhi bridge published package', () => {
         "    - id: dsh-jizhi-bridge\n" +
         "      name: '@ywandy/dsh-jizhi-bridge'\n"
     )
+  })
+
+  it('documents the fixed mounted skill roots and cache boundary', async () => {
+    const [readme, readmeZh] = await Promise.all([
+      readFile(readmeUrl, 'utf8'),
+      readFile(readmeZhUrl, 'utf8')
+    ])
+    expect(readme).toContain('/agent/skills')
+    expect(readme).toContain('/agent/user/<net>/<user>/user_skills')
+    expect(readme).toContain('skill')
+    expect(readme).toContain('cache')
+    expect(readmeZh).toContain('/agent/skills')
+    expect(readmeZh).toContain('/agent/user/<net>/<user>/user_skills')
+    expect(readmeZh).toContain('skill')
+    expect(readmeZh).toContain('缓存')
   })
 
   it('verifies the packed contents of every published workspace package', async () => {

@@ -24,6 +24,7 @@ const packageChecks = [
       'README.zh.md',
       'cordis.patch.yml',
       'index.js',
+      'lib/skill-provider.js',
       'lib/tool-jsonl.js',
       'lib/workspace-markdown.js',
       'package.json'

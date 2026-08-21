@@ -16,6 +16,10 @@ import {
   isValidCallId,
   writeToolJsonl
 } from '../lib/tool-jsonl.js'
+import {
+  createJizhiSkillProvider,
+  resolveJizhiSkillRoots
+} from '../lib/skill-provider.js'
 import { apply, inject, name } from '../index.js'
 
 const temporaryRoots = []
@@ -61,13 +65,34 @@ function toolResultEvent(callId = 'call_1', content = [{ type: 'text', text: 'do
   }
 }
 
+async function writeSkill(root, name, content) {
+  const directory = path.join(root, name)
+  await mkdir(directory, { recursive: true })
+  await writeFile(path.join(directory, 'SKILL.md'), content)
+  return directory
+}
+
 function hostFixture() {
   const handlers = new Map()
   const sections = new Map()
   const variables = new Map()
+  const skillRegistrations = []
+  const skills = {
+    registerProvider: vi.fn((factory) => {
+      const lifecycle = new AbortController()
+      const provider = factory({
+        signal: lifecycle.signal,
+        invalidate: vi.fn()
+      })
+      const dispose = () => lifecycle.abort(new Error('disposed'))
+      skillRegistrations.push({ lifecycle, provider, dispose })
+      return dispose
+    })
+  }
   const ctx = {
     attachments: { readImage: vi.fn() },
     logger: { warn: vi.fn() },
+    skills,
     systemPrompt: {
       section: vi.fn((section) => {
         sections.set(section.name, section)
@@ -83,7 +108,7 @@ function hostFixture() {
       return () => handlers.delete(eventName)
     }
   }
-  return { ctx, handlers, sections, variables }
+  return { ctx, handlers, sections, variables, skillRegistrations }
 }
 
 describe('Jizhi workspace Markdown snapshot', () => {
@@ -372,13 +397,116 @@ describe('Jizhi tool JSONL', () => {
   })
 })
 
+describe('Jizhi mounted skill provider', () => {
+  it('derives the fixed user skill root from a DSH workspace cwd', () => {
+    expect(resolveJizhiSkillRoots('/agent/user/wan/gz0175/workspace/wp_42')).toEqual({
+      systemRoot: '/agent/skills',
+      userRoot: '/agent/user/wan/gz0175/user_skills'
+    })
+    expect(resolveJizhiSkillRoots('/tmp/workspace')).toEqual({
+      systemRoot: '/agent/skills',
+      userRoot: undefined
+    })
+    expect(resolveJizhiSkillRoots('/agent/user/wan/gz0175/not-workspace/wp_42')).toEqual({
+      systemRoot: '/agent/skills',
+      userRoot: undefined
+    })
+  })
+
+  it('lists stable metadata across system and user roots with system precedence', async () => {
+    const root = await temporaryRoot()
+    const systemRoot = path.join(root, 'system')
+    const userRoot = path.join(root, 'user')
+    await writeSkill(systemRoot, 'zeta', '---\nname: zeta\ndescription: Zeta skill\n---\n# Zeta')
+    await writeSkill(systemRoot, 'shared', '---\nname: shared\ndescription: System shared\n---\n# System')
+    await writeSkill(userRoot, 'alpha', '---\nname: alpha\ndescription: Alpha skill\n---\n# Alpha')
+    await writeSkill(userRoot, 'shared', '---\nname: shared\ndescription: User shared\n---\n# User')
+    await writeSkill(userRoot, 'plain', '# Plain skill without frontmatter')
+
+    const provider = createJizhiSkillProvider({
+      systemRoot,
+      resolveUserRoot: () => userRoot,
+      watch: () => ({ close() {} })
+    })
+    const candidates = await provider.list({ cwd: '/agent/user/wan/gz0175/workspace/wp_42' })
+
+    expect(candidates.map((candidate) => candidate.name)).toEqual([
+      'alpha',
+      'plain',
+      'shared',
+      'zeta'
+    ])
+    expect(candidates.find((candidate) => candidate.name === 'shared')).toMatchObject({
+      description: 'System shared',
+      source: 'bundled',
+      rank: 500,
+      resourceBase: { kind: 'directory', path: path.join(systemRoot, 'shared') }
+    })
+    expect(candidates.find((candidate) => candidate.name === 'plain').description).not.toBe('')
+  })
+
+  it('loads a skill body lazily and removes only the YAML frontmatter', async () => {
+    const root = await temporaryRoot()
+    const systemRoot = path.join(root, 'system')
+    const skillDirectory = await writeSkill(
+      systemRoot,
+      'writer',
+      '---\nname: writer\ndescription: Write files\npermissions:\n  - file_write\n---\n\n# Writer\n\nFollow this.'
+    )
+    const provider = createJizhiSkillProvider({
+      systemRoot,
+      resolveUserRoot: () => undefined,
+      watch: () => ({ close() {} })
+    })
+    const [candidate] = await provider.list({ cwd: '/tmp/workspace' })
+    const definition = await provider.get(candidate, { cwd: '/tmp/workspace' })
+
+    expect(definition).toMatchObject({
+      name: 'writer',
+      description: 'Write files',
+      content: '# Writer\n\nFollow this.',
+      path: path.join(skillDirectory, 'SKILL.md'),
+      resourceBase: { kind: 'directory', path: skillDirectory },
+      metadata: { permissions: ['file_write'] }
+    })
+  })
+
+  it('invalidates the DSH catalog on filesystem changes and closes watchers on abort', async () => {
+    const root = await temporaryRoot()
+    const systemRoot = path.join(root, 'system')
+    await writeSkill(systemRoot, 'watchable', '---\nname: watchable\ndescription: Watch me\n---\nbody')
+    const callbacks = []
+    const invalidated = vi.fn()
+    const lifecycle = new AbortController()
+    const provider = createJizhiSkillProvider({
+      systemRoot,
+      signal: lifecycle.signal,
+      invalidate: invalidated,
+      watch(target, _options, callback) {
+        callbacks.push({ target, callback })
+        return { close: vi.fn() }
+      }
+    })
+
+    await provider.list({ cwd: '/tmp/workspace' })
+    expect(callbacks.map(({ target }) => target)).toContain(systemRoot)
+    callbacks[0].callback('change', 'SKILL.md')
+    expect(invalidated).toHaveBeenCalledOnce()
+    lifecycle.abort()
+    callbacks[0].callback('change', 'SKILL.md')
+    expect(invalidated).toHaveBeenCalledOnce()
+  })
+})
+
 describe('Jizhi bridge Host plugin', () => {
   it('registers one Host-only prompt section and literal brace variable', () => {
     const fixture = hostFixture()
     apply(fixture.ctx)
 
     expect(name).toBe('dsh-jizhi-bridge')
-    expect(inject).toEqual(['systemPrompt', 'attachments'])
+    expect(inject).toEqual(['systemPrompt', 'attachments', 'skills'])
+    expect(fixture.ctx.skills.registerProvider).toHaveBeenCalledOnce()
+    expect(fixture.skillRegistrations[0].provider.name).toBe('jizhi-mounted-skills')
     expect(fixture.sections.get('jizhi:workspace').order).toBe(50)
     expect(fixture.variables.get('jizhi_open')({})).toBe('{{')
     expect(fixture.handlers.has('agent/pre-step')).toBe(false)

@@ -19,8 +19,22 @@ Bundle patch 会自动挂载 Host 插件；本包不包含 Client bundle 或设�
 - 每条被 Agent 领取且来源为 `user` 的消息刷新一次；同一 Agent Loop 的后续模型请求复用完全相同的提示词，保持前缀缓存稳定。
 - 在最终结果提交后，把模型可见的顶层工具调用写入 `.jizhiagent/tools/call_id_<callId>.jsonl`。
 - 成功、失败、文本、reasoning、图片和扩展 block 都会记录；桥接失败不会改变 DSH 工具结果。
+- 注册 DSH 标准 `skill` Provider，读取容器内 `/agent/skills` 的系统技能和 `/agent/user/<net>/<user>/user_skills` 的用户技能。
+- 从形如 `/agent/user/<net>/<user>/workspace/...` 的 Session `cwd` 提取 `net/user`；同名技能以系统目录为准。
+- 技能摘要由 DSH 按 cwd 缓存，只有模型调用 `skill` 时才加载完整 `SKILL.md`；挂载文件变化由 watcher 触发 catalog invalidate，不按每个 Agent Loop 强制扫描。
 
 插件永远不会创建 `.jizhiagent/`。未进入 DSH 模型历史的 Code Mode 内部 dispatch 不会生成独立文件。
+
+## 挂载 Skill 目录
+
+DSH 服务容器必须把极智技能目录挂载到以下固定路径：
+
+```text
+/agent/skills
+/agent/user/<net>/<user>/user_skills
+```
+
+每个技能是目录下的一层子目录，并包含 `SKILL.md`。Provider 保留 frontmatter，并把该目录作为资源基目录，因此脚本和参考文件都按容器内相对路径解析。根目录缺失或单个文件异常时只记录 warning 并跳过，不影响 DSH 会话。
 
 ## 兼容范围
 
