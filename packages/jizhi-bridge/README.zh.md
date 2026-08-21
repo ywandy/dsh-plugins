@@ -17,6 +17,9 @@ Bundle patch 会自动挂载 Host 插件；本包不包含 Client bundle 或设�
 - 仅当 Session 的绝对 `cwd` 已存在 `.jizhiagent/` 目录时启用。
 - 固定按 `AGENTS.md`、`IDENTITY.md`、`USER.md`、`MEMORY.md`、`SUMMARY.md` 顺序加载。
 - 每条被 Agent 领取且来源为 `user` 的消息刷新一次；同一 Agent Loop 的后续模型请求复用完全相同的提示词，保持前缀缓存稳定。
+- 注入名为 `jizhi:runtime-facts` 的动态 context，使用 `<runtime_session_facts>` 格式提供工作区、Host 运行环境、当前模型、Chat、当前 prompt 显式指定的 Skill 和发送方信息。
+- runtime facts 只在真实用户消息被 Agent 领取时生成一次；同一 Agent Loop 的工具 step 复用同一快照，下一条用户消息才刷新，避免动态字段破坏稳定 system prompt 前缀缓存。
+- 插件直接填充能从 DSH Agent、Session 和 `cwd` 推导的字段；缺失字段显示 `unknown`，并兼容 `message.runtimeFacts` 或 `message.source.runtimeFacts` 中的已知结构化覆盖字段。
 - 在最终结果提交后，把模型可见的顶层工具调用写入 `.jizhiagent/tools/call_id_<callId>.jsonl`。
 - 成功、失败、文本、reasoning、图片和扩展 block 都会记录；桥接失败不会改变 DSH 工具结果。
 - 注册 `collect_artifacts` 交付工具。参数为 `files: [{path}]`，`path` 必须是 `artifacts/` 下的相对常规文件；工具只写入 `.jizhiagent/logs/artifacts_msg_<req_msgid>.json`，由极智后端在回答结束时读取并上传。当前用户消息必须在 `source.rpcId` 携带正整数极智请求 ID；UUID 会被拒绝，不会猜测。

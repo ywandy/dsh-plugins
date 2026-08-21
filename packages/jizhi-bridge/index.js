@@ -6,6 +6,11 @@ import {
   createArtifactDeliveryTool,
   parseRequestMessageId
 } from './lib/artifact-delivery.js'
+import {
+  RUNTIME_FACTS_CONTEXT_NAME,
+  RUNTIME_FACTS_CONTEXT_ORDER,
+  createRuntimeFactsSnapshot
+} from './lib/runtime-facts.js'
 
 export const name = 'dsh-jizhi-bridge'
 export const inject = ['systemPrompt', 'attachments', 'skills', 'credentials', 'subprocess', 'tools']
@@ -13,6 +18,7 @@ export const inject = ['systemPrompt', 'attachments', 'skills', 'credentials', '
 export async function apply(ctx) {
   const snapshots = new WeakMap()
   const requestIds = new WeakMap()
+  const runtimeFacts = new WeakMap()
   const warn = (message) => ctx.logger.warn(message)
   const toolJsonl = createToolJsonlBridge({ attachments: ctx.attachments, warn })
   const artifactTool = createArtifactDeliveryTool({
@@ -54,6 +60,11 @@ export async function apply(ctx) {
     order: 50,
     text: ({ agent }) => agent === undefined ? '' : snapshots.get(agent)?.text ?? ''
   })
+  ctx.systemPrompt.context({
+    name: RUNTIME_FACTS_CONTEXT_NAME,
+    order: RUNTIME_FACTS_CONTEXT_ORDER,
+    text: ({ agent }) => agent === undefined ? '' : runtimeFacts.get(agent)?.text ?? ''
+  })
 
   ctx.on('agent/inbox/claimed', ({ agent, message }) => {
     if (message.source.kind !== 'user') return
@@ -65,8 +76,13 @@ export async function apply(ctx) {
       snapshots.get(agent),
       { warn }
     )
-    if (next === undefined) snapshots.delete(agent)
-    else snapshots.set(agent, next)
+    if (next === undefined) {
+      snapshots.delete(agent)
+      runtimeFacts.delete(agent)
+    } else {
+      snapshots.set(agent, next)
+      runtimeFacts.set(agent, createRuntimeFactsSnapshot(agent, message))
+    }
   })
 
   ctx.on('session/event', (session, event) => {

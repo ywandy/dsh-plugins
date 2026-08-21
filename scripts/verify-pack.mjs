@@ -26,6 +26,7 @@ const packageChecks = [
       'index.js',
       'lib/artifact-delivery.js',
       'lib/credential-forwarder.js',
+      'lib/runtime-facts.js',
       'lib/skill-provider.js',
       'lib/tool-jsonl.js',
       'lib/workspace-markdown.js',

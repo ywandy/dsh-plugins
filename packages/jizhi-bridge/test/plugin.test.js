@@ -24,6 +24,12 @@ import {
   createArtifactDeliveryTool,
   parseRequestMessageId
 } from '../lib/artifact-delivery.js'
+import {
+  RUNTIME_FACTS_CONTEXT_NAME,
+  RUNTIME_FACTS_CONTEXT_ORDER,
+  createRuntimeFactsSnapshot,
+  extractRequestedSkillNames
+} from '../lib/runtime-facts.js'
 import { apply, inject, name } from '../index.js'
 
 const temporaryRoots = []
@@ -79,6 +85,7 @@ async function writeSkill(root, name, content) {
 function hostFixture() {
   const handlers = new Map()
   const sections = new Map()
+  const contexts = new Map()
   const variables = new Map()
   const skillRegistrations = []
   const registeredTools = new Map()
@@ -136,6 +143,10 @@ function hostFixture() {
         sections.set(section.name, section)
         return () => sections.delete(section.name)
       }),
+      context: vi.fn((context) => {
+        contexts.set(context.name, context)
+        return () => contexts.delete(context.name)
+      }),
       variable: vi.fn((variableName, provider) => {
         variables.set(variableName, provider)
         return () => variables.delete(variableName)
@@ -155,6 +166,7 @@ function hostFixture() {
     ctx,
     handlers,
     sections,
+    contexts,
     variables,
     skillRegistrations,
     registeredTools,
@@ -243,6 +255,55 @@ describe('Jizhi workspace Markdown snapshot', () => {
     expect(next.files['MEMORY.md']).toBe('old memory')
     expect(next.files).not.toHaveProperty('SUMMARY.md')
     expect(warn).toHaveBeenCalledOnce()
+  })
+})
+
+describe('Jizhi runtime facts', () => {
+  it('extracts requested skills in source order and deduplicates case-insensitively', () => {
+    const message = {
+      content: [{
+        type: 'text',
+        text: '先用 [$pdf](skill://pdf)，再用 <skill name="xlsx"></skill>，最后重复 <skill><name>PDF</name></skill>'
+      }]
+    }
+
+    expect(extractRequestedSkillNames(message)).toEqual(['pdf', 'xlsx'])
+  })
+
+  it('renders stable facts from one DSH agent and explicit overrides', () => {
+    const agent = {
+      id: 'jizhi-chat-42',
+      options: { provider: 'openai', model: 'gpt-5.6-sol' },
+      session: {
+        header: {
+          id: 'jizhi-chat-42',
+          cwd: '/agent/user/wan/yewei/workspace/chat-42'
+        }
+      }
+    }
+    const message = {
+      source: { kind: 'user' },
+      content: [{ type: 'text', text: '请使用 [$pdf](skill://pdf)' }],
+      runtimeFacts: { senderCname: '叶伟', nickName: '小叶 {{unsafe}}' }
+    }
+    const snapshot = createRuntimeFactsSnapshot(agent, message, {
+      runtimeEnvironment: '## Sandbox Environment\nOS: test-sandbox'
+    })
+
+    expect(RUNTIME_FACTS_CONTEXT_NAME).toBe('jizhi:runtime-facts')
+    expect(RUNTIME_FACTS_CONTEXT_ORDER).toBe(1000)
+    expect(snapshot.facts).toMatchObject({
+      workspacePath: '/agent/user/wan/yewei/workspace/chat-42',
+      currentModelName: 'gpt-5.6-sol',
+      chatId: '42',
+      requestedSkills: ['pdf'],
+      senderCname: '叶伟',
+      senderStaffID: 'yewei',
+      nickName: '小叶 {{unsafe}}'
+    })
+    expect(snapshot.text).toContain('<runtime_session_facts>')
+    expect(snapshot.text).toContain('chain: pdf->')
+    expect(snapshot.text).toContain('小叶 {{jizhi_open}}unsafe}}')
   })
 })
 
@@ -622,7 +683,7 @@ describe('Jizhi mounted skill provider', () => {
 })
 
 describe('Jizhi bridge Host plugin', () => {
-  it('registers one Host-only prompt section and literal brace variable', async () => {
+  it('registers one Host-only prompt section, runtime context, and literal brace variable', async () => {
     const fixture = hostFixture()
     await apply(fixture.ctx)
 
@@ -633,6 +694,7 @@ describe('Jizhi bridge Host plugin', () => {
     expect(fixture.registeredTools.get('collect_artifacts')).toBeDefined()
     expect(fixture.skillRegistrations[0].provider.name).toBe('jizhi-mounted-skills')
     expect(fixture.sections.get('jizhi:workspace').order).toBe(50)
+    expect(fixture.contexts.get('jizhi:runtime-facts').order).toBe(1000)
     expect(fixture.variables.get('jizhi_open')({})).toBe('{{')
     expect(fixture.handlers.has('agent/pre-step')).toBe(false)
     expect(fixture.handlers.has('agent/inbox/claimed')).toBe(true)
@@ -699,6 +761,51 @@ describe('Jizhi bridge Host plugin', () => {
     expect(fixture.registeredTools.has('collect_artifacts')).toBe(false)
   })
 
+  it('injects one runtime snapshot per claimed real user message', async () => {
+    const root = await temporaryRoot()
+    await mkdir(path.join(root, '.jizhiagent'))
+    const fixture = hostFixture()
+    await apply(fixture.ctx)
+    const agent = {
+      id: 'jizhi-chat-17',
+      options: { provider: 'openai', model: 'gpt-5.6-sol' },
+      session: { header: { id: 'jizhi-chat-17', cwd: root } }
+    }
+    const claimed = fixture.handlers.get('agent/inbox/claimed')
+    const context = fixture.contexts.get('jizhi:runtime-facts')
+
+    expect(context.order).toBe(1000)
+    claimed({
+      agent,
+      message: {
+        source: { kind: 'user', rpcId: '17' },
+        content: [{ type: 'text', text: '使用 [$pdf](skill://pdf)' }]
+      }
+    })
+    const first = context.text({ agent })
+    expect(first).toContain('Chat ID: 17')
+    expect(first).toContain('chain: pdf->')
+
+    claimed({
+      agent,
+      message: {
+        source: { kind: 'tool' },
+        content: [{ type: 'text', text: '<skill name="xlsx"></skill>' }]
+      }
+    })
+    expect(context.text({ agent })).toBe(first)
+
+    claimed({
+      agent,
+      message: {
+        source: { kind: 'user', rpcId: '18' },
+        content: [{ type: 'text', text: '<skill name="xlsx"></skill>' }]
+      }
+    })
+    expect(context.text({ agent })).not.toBe(first)
+    expect(context.text({ agent })).toContain('chain: xlsx->')
+  })
+
   it('keeps an ordinary workspace prompt empty', async () => {
     const root = await temporaryRoot()
     const fixture = hostFixture()
@@ -710,6 +817,7 @@ describe('Jizhi bridge Host plugin', () => {
       message: { source: { kind: 'user' } }
     })
     expect(fixture.sections.get('jizhi:workspace').text({ agent })).toBe('')
+    expect(fixture.contexts.get('jizhi:runtime-facts').text({ agent })).toBe('')
   })
 
   it('routes committed tool events to JSONL and awaits them on session flush', async () => {
