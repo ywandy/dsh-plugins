@@ -2,14 +2,25 @@ import { refreshWorkspaceSnapshot } from './lib/workspace-markdown.js'
 import { createJizhiSkillProvider } from './lib/skill-provider.js'
 import { createToolJsonlBridge } from './lib/tool-jsonl.js'
 import { createCredentialForwarder } from './lib/credential-forwarder.js'
+import {
+  createArtifactDeliveryTool,
+  parseRequestMessageId
+} from './lib/artifact-delivery.js'
 
 export const name = 'dsh-jizhi-bridge'
-export const inject = ['systemPrompt', 'attachments', 'skills', 'credentials', 'subprocess']
+export const inject = ['systemPrompt', 'attachments', 'skills', 'credentials', 'subprocess', 'tools']
 
 export async function apply(ctx) {
   const snapshots = new WeakMap()
+  const requestIds = new WeakMap()
   const warn = (message) => ctx.logger.warn(message)
   const toolJsonl = createToolJsonlBridge({ attachments: ctx.attachments, warn })
+  const artifactTool = createArtifactDeliveryTool({
+    requestIdForAgent: (agent) => requestIds.get(agent),
+    warn
+  })
+  const unregisterArtifactTool = ctx.tools.register(artifactTool)
+  ctx.effect(() => () => unregisterArtifactTool?.(), 'dsh-jizhi-bridge: artifact delivery tool')
   const forwarder = createCredentialForwarder({
     credentials: ctx.credentials,
     subprocess: ctx.subprocess
@@ -46,6 +57,9 @@ export async function apply(ctx) {
 
   ctx.on('agent/inbox/claimed', ({ agent, message }) => {
     if (message.source.kind !== 'user') return
+    const requestMessageId = parseRequestMessageId(message.source.rpcId)
+    if (requestMessageId === undefined) requestIds.delete(agent)
+    else requestIds.set(agent, requestMessageId)
     const next = refreshWorkspaceSnapshot(
       agent.session.header.cwd,
       snapshots.get(agent),

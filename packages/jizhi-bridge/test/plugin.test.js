@@ -20,6 +20,10 @@ import {
   createJizhiSkillProvider,
   resolveJizhiSkillRoots
 } from '../lib/skill-provider.js'
+import {
+  createArtifactDeliveryTool,
+  parseRequestMessageId
+} from '../lib/artifact-delivery.js'
 import { apply, inject, name } from '../index.js'
 
 const temporaryRoots = []
@@ -77,6 +81,7 @@ function hostFixture() {
   const sections = new Map()
   const variables = new Map()
   const skillRegistrations = []
+  const registeredTools = new Map()
   const effects = []
   const credentialValues = {
     OPENAI_API_KEY: 'key-v1',
@@ -113,11 +118,18 @@ function hostFixture() {
       return dispose
     })
   }
+  const tools = {
+    register: vi.fn((tool) => {
+      registeredTools.set(tool.name, tool)
+      return () => registeredTools.delete(tool.name)
+    })
+  }
   const ctx = {
     attachments: { readImage: vi.fn() },
     logger: { warn: vi.fn() },
     credentials,
     subprocess,
+    tools,
     skills,
     systemPrompt: {
       section: vi.fn((section) => {
@@ -145,6 +157,7 @@ function hostFixture() {
     sections,
     variables,
     skillRegistrations,
+    registeredTools,
     credentials,
     subprocess,
     spawnCalls,
@@ -442,6 +455,71 @@ describe('Jizhi tool JSONL', () => {
   })
 })
 
+describe('Jizhi artifact delivery tool', () => {
+  it('accepts only positive safe integer request ids', () => {
+    expect(parseRequestMessageId('123')).toBe(123)
+    expect(parseRequestMessageId(456)).toBe(456)
+    for (const value of ['', '0', '-1', '1.2', 'abc', 0, -1, 1.2, Number.MAX_SAFE_INTEGER + 1]) {
+      expect(parseRequestMessageId(value)).toBeUndefined()
+    }
+  })
+
+  it('writes a deduplicated manifest and supports an explicit empty list', async () => {
+    const root = await temporaryRoot()
+    await mkdir(path.join(root, '.jizhiagent'), { recursive: true })
+    await mkdir(path.join(root, 'artifacts', 'reports'), { recursive: true })
+    await writeFile(path.join(root, 'artifacts', 'reports', 'result.md'), 'ok')
+    const tool = createArtifactDeliveryTool({ requestIdForAgent: () => 42 })
+    const exec = { agent: { session: { header: { cwd: root } } } }
+
+    const result = await tool.execute({
+      files: [{ path: 'reports/result.md' }, { path: 'reports/./result.md' }]
+    }, exec)
+    expect(result).toMatchObject({ status: 'success', delivered: ['reports/result.md'] })
+    expect(result.note).toContain('自动附加')
+    const manifest = JSON.parse(await readFile(
+      path.join(root, '.jizhiagent', 'logs', 'artifacts_msg_42.json'),
+      'utf8'
+    ))
+    expect(manifest).toEqual({
+      req_msgid: 42,
+      files: [{ path: 'reports/result.md' }]
+    })
+
+    const empty = await tool.execute({ files: [] }, exec)
+    expect(empty.delivered).toEqual([])
+    expect(empty.note).toContain('无交付文件')
+  })
+
+  it('rejects unsafe, missing, and directory paths without creating metadata', async () => {
+    const root = await temporaryRoot()
+    const systemDir = path.join(root, '.jizhiagent')
+    await mkdir(systemDir)
+    await mkdir(path.join(root, 'artifacts', 'reports'), { recursive: true })
+    await writeFile(path.join(root, 'artifacts', 'reports', 'result.md'), 'ok')
+    const tool = createArtifactDeliveryTool({ requestIdForAgent: () => 7 })
+    const exec = { agent: { session: { header: { cwd: root } } } }
+
+    for (const file of ['../secret.txt', '/tmp/secret.txt', 'missing.md', 'reports']) {
+      await expect(tool.execute({ files: [{ path: file }] }, exec)).rejects.toThrow()
+    }
+    await expect(readFile(path.join(systemDir, 'logs', 'artifacts_msg_7.json'))).rejects.toMatchObject({
+      code: 'ENOENT'
+    })
+  })
+
+  it('does not create .jizhiagent when the workspace is ordinary', async () => {
+    const root = await temporaryRoot()
+    await mkdir(path.join(root, 'artifacts'), { recursive: true })
+    const tool = createArtifactDeliveryTool({ requestIdForAgent: () => 9 })
+    await expect(tool.execute(
+      { files: [] },
+      { agent: { session: { header: { cwd: root } } } }
+    )).rejects.toThrow(/\.jizhiagent/)
+    await expect(stat(path.join(root, '.jizhiagent'))).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+})
+
 describe('Jizhi mounted skill provider', () => {
   it('derives the fixed user skill root from a DSH workspace cwd', () => {
     expect(resolveJizhiSkillRoots('/agent/user/wan/gz0175/workspace/wp_42')).toEqual({
@@ -549,8 +627,10 @@ describe('Jizhi bridge Host plugin', () => {
     await apply(fixture.ctx)
 
     expect(name).toBe('dsh-jizhi-bridge')
-    expect(inject).toEqual(['systemPrompt', 'attachments', 'skills', 'credentials', 'subprocess'])
+    expect(inject).toEqual(['systemPrompt', 'attachments', 'skills', 'credentials', 'subprocess', 'tools'])
     expect(fixture.ctx.skills.registerProvider).toHaveBeenCalledOnce()
+    expect(fixture.ctx.tools.register).toHaveBeenCalledOnce()
+    expect(fixture.registeredTools.get('collect_artifacts')).toBeDefined()
     expect(fixture.skillRegistrations[0].provider.name).toBe('jizhi-mounted-skills')
     expect(fixture.sections.get('jizhi:workspace').order).toBe(50)
     expect(fixture.variables.get('jizhi_open')({})).toBe('{{')
@@ -605,14 +685,18 @@ describe('Jizhi bridge Host plugin', () => {
     const claimed = fixture.handlers.get('agent/inbox/claimed')
     const section = fixture.sections.get('jizhi:workspace')
 
-    claimed({ agent, message: { source: { kind: 'user' } } })
+    claimed({ agent, message: { source: { kind: 'user', rpcId: '17' } } })
     expect(section.text({ agent })).toContain('version one')
     await writeFile(path.join(systemDir, 'SUMMARY.md'), 'version two')
     claimed({ agent, message: { source: { kind: 'tool' } } })
     expect(section.text({ agent })).toContain('version one')
     expect(section.text({ agent })).not.toContain('version two')
-    claimed({ agent, message: { source: { kind: 'user' } } })
+    claimed({ agent, message: { source: { kind: 'user', rpcId: '17' } } })
     expect(section.text({ agent })).toContain('version two')
+    const tool = fixture.registeredTools.get('collect_artifacts')
+    await expect(tool.execute({ files: [] }, { agent })).resolves.toMatchObject({ status: 'success' })
+    fixture.cleanup()
+    expect(fixture.registeredTools.has('collect_artifacts')).toBe(false)
   })
 
   it('keeps an ordinary workspace prompt empty', async () => {

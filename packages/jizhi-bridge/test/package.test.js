@@ -51,6 +51,7 @@ describe('jizhi bridge published package', () => {
       '@deepseek-ai/dsh-agent': '^0.1.0-rc.7',
       '@deepseek-ai/dsh-attachment': '^0.1.0-rc.7',
       '@deepseek-ai/dsh-credentials': '^0.1.0-rc.7',
+      '@deepseek-ai/dsh-tools': '^0.1.0-rc.7',
       '@deepseek-ai/dsh-skill': '^0.1.0-rc.7',
       '@deepseek-ai/dsh-session': '^0.1.0-rc.7',
       '@deepseek-ai/dsh-subprocess': '^0.1.0-rc.7',
