@@ -22,6 +22,7 @@ The bundle patch mounts the Host plugin automatically. No Client bundle or setti
 - Registers the standard DSH `skill` provider for mounted Jizhi skills. It reads system skills from `/agent/skills` and user skills from `/agent/user/<net>/<user>/user_skills`.
 - Derives `<net>/<user>` from a Session cwd shaped like `/agent/user/<net>/<user>/workspace/...`; system skills win same-name conflicts.
 - Skill summaries are catalog-cached by DSH, while full `SKILL.md` bodies load only when the model invokes `skill`. File watchers invalidate the catalog after mounted files change.
+- As a temporary compatibility layer, forwards non-empty `OPENAI_API_KEY` and `OPENAI_BASE_URL` values from the Host credential provider into every DSH subprocess via explicit environment variables. This covers ordinary spawns, terminal sessions, bash, LSP, and other subprocess callers; it does not change Harness ambient-env scrubbing. Remove or disable this plugin to stop the forwarding, and remember that any subprocess using the plugin may read these variables.
 
 The plugin never creates `.jizhiagent/`. Internal Code Mode dispatches that are absent from DSH model history do not get separate files.
 

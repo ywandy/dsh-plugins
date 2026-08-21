@@ -8,6 +8,7 @@ import { describe, expect, it } from 'vitest'
 const packageDirectoryUrl = new URL('../', import.meta.url)
 const manifestUrl = new URL('package.json', packageDirectoryUrl)
 const patchUrl = new URL('cordis.patch.yml', packageDirectoryUrl)
+const helperUrl = new URL('lib/credential-forwarder.js', packageDirectoryUrl)
 const readmeUrl = new URL('README.md', packageDirectoryUrl)
 const readmeZhUrl = new URL('README.zh.md', packageDirectoryUrl)
 const repositoryRoot = fileURLToPath(new URL('../../../', import.meta.url))
@@ -49,8 +50,10 @@ describe('jizhi bridge published package', () => {
       '@deepseek-ai/cordis': '^4.0.1',
       '@deepseek-ai/dsh-agent': '^0.1.0-rc.7',
       '@deepseek-ai/dsh-attachment': '^0.1.0-rc.7',
+      '@deepseek-ai/dsh-credentials': '^0.1.0-rc.7',
       '@deepseek-ai/dsh-skill': '^0.1.0-rc.7',
       '@deepseek-ai/dsh-session': '^0.1.0-rc.7',
+      '@deepseek-ai/dsh-subprocess': '^0.1.0-rc.7',
       '@deepseek-ai/dsh-system-prompt': '^0.1.0-rc.7'
     })
     expect(manifest.dependencies).toEqual({
@@ -66,6 +69,12 @@ describe('jizhi bridge published package', () => {
     )
   })
 
+  it('ships the credential forwarder helper in the public lib directory', async () => {
+    const helper = await readFile(helperUrl, 'utf8')
+    expect(helper).toContain('createCredentialForwarder')
+    expect(helper).toContain('OPENAI_API_KEY')
+  })
+
   it('documents the fixed mounted skill roots and cache boundary', async () => {
     const [readme, readmeZh] = await Promise.all([
       readFile(readmeUrl, 'utf8'),
@@ -75,10 +84,16 @@ describe('jizhi bridge published package', () => {
     expect(readme).toContain('/agent/user/<net>/<user>/user_skills')
     expect(readme).toContain('skill')
     expect(readme).toContain('cache')
+    expect(readme).toContain('OPENAI_API_KEY')
+    expect(readme).toContain('subprocess')
+    expect(readme).toContain('temporary')
     expect(readmeZh).toContain('/agent/skills')
     expect(readmeZh).toContain('/agent/user/<net>/<user>/user_skills')
     expect(readmeZh).toContain('skill')
     expect(readmeZh).toContain('缓存')
+    expect(readmeZh).toContain('OPENAI_API_KEY')
+    expect(readmeZh).toContain('子进程')
+    expect(readmeZh).toContain('临时')
   })
 
   it('verifies the packed contents of every published workspace package', async () => {
