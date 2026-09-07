@@ -8,7 +8,7 @@
 
 | 包 | 功能 | 兼容范围 |
 | --- | --- | --- |
-| [`@ywandy/dsh-desktop-temporary-workspace`](packages/desktop-temporary-workspace/README.zh.md) | 从现有 Workspace 选择器创建共用可配置默认执行目录的未分组 Session。 | 使用 `@deepseek-ai/dsh@0.1.0-rc.7` 的未修改 DSH Desktop `origin/main` |
+| [`@ywandy/dsh-desktop-temporary-workspace`](packages/desktop-temporary-workspace/README.zh.md) | 在标准 Workspace 下拉中加入共用可配置的默认执行目录，并在那里打开未分组 Session。 | 提供标准 Workspace Picker、Session、Workspace 和 UI primitives 服务的 DSH Host |
 | [`@ywandy/dsh-jizhi-bridge`](packages/jizhi-bridge/README.zh.md) | 加载极智工作区 Markdown、暴露多根挂载 Skill、写入极智兼容 JSONL，并注册 `collect_artifacts` 交付清单工具。 | 使用 `@deepseek-ai/dsh@0.1.0-rc.7` 的未修改 DSH Desktop |
 
 ## 安装
@@ -22,7 +22,7 @@ dsh plugin --profile web add @ywandy/dsh-jizhi-bridge
 
 ## 兼容性
 
-DeepSeek Harness 当前处于开发者预览阶段，可能发生破坏性变更。每个包会单独声明经过验证的宿主和 peer dependency 要求。当前两个插件均已在使用 `@deepseek-ai/dsh@0.1.0-rc.7` 的未修改 DSH Desktop 组合上验证。
+DeepSeek Harness 当前处于开发者预览阶段，可能发生破坏性变更。每个包会单独声明经过验证的宿主和 peer dependency 要求。默认工作区插件按 `@deepseek-ai/dsh@0.1.0-rc.7` 的标准服务契约验证。
 
 ## 开发
 

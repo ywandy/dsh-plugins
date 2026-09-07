@@ -1,7 +1,7 @@
 {
   "name": "@ywandy/dsh-desktop-temporary-workspace",
-  "version": "0.3.0",
-  "description": "Adds a deferred default workspace backed by a shared configurable working directory.",
+  "version": "0.4.0",
+  "description": "Adds a configurable default working directory to the standard Workspace picker.",
   "private": false,
   "type": "module",
   "main": "./index.js",
@@ -46,6 +46,7 @@
     "client": {
       "inject": [
         "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-primitives",
         "@deepseek-ai/dsh-client-ui-settings",
         "@deepseek-ai/dsh-client-ui-settings-plugins",
         "@deepseek-ai/dsh-client-ui-workspace"
@@ -61,6 +62,7 @@
     "@deepseek-ai/dsh-client-locale": "^0.1.0-rc.7",
     "@deepseek-ai/dsh-client-ui-settings": "^0.1.0-rc.7",
     "@deepseek-ai/dsh-client-ui-settings-plugins": "^0.1.0-rc.7",
+    "@deepseek-ai/dsh-client-ui-primitives": "^0.1.0-rc.7",
     "@deepseek-ai/dsh-client-ui-workspace": "^0.1.0-rc.7",
     "@deepseek-ai/dsh-host-webserver": "^0.1.0-rc.7",
     "@deepseek-ai/dsh-settings": "^0.1.0-rc.7",

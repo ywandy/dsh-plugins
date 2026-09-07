@@ -5,13 +5,26 @@ window.__ModuleLoader__.load({
     const exports = module.exports
     Object.defineProperty(exports, Symbol.toStringTag, { value: 'Module' })
     const React = require('react')
+    const {
+      Button,
+      IconFolderClose16,
+      IconNewChatOutline16,
+      IconPlusOutline16,
+      Menu,
+      Modal
+    } = require('@deepseek-ai/dsh-client-ui-primitives')
 
     const NS = 'desktop.temporaryWorkspace'
     const SETTINGS_NAMESPACE = 'desktop-temporary-workspace'
     const ENSURE_PATH = '/dsh-desktop/default-workspace/ensure'
+    const DEFAULT_WORKSPACE_ID = 'default'
+    const ADD_WORKSPACE_ID = 'add-workspace'
 
     const zh = {
       defaultWorkspace: '默认执行目录',
+      addWorkspace: '添加工作区…',
+      operationFailed: '无法打开工作区',
+      close: '关闭',
       settingsTitle: '默认执行目录',
       settingsDescription: '无需选择项目即可创建独立任务；所有默认会话共享同一目录。',
       rootDirectory: '默认执行目录',
@@ -25,6 +38,9 @@ window.__ModuleLoader__.load({
 
     const en = {
       defaultWorkspace: 'Default workspace',
+      addWorkspace: 'Add workspace…',
+      operationFailed: 'Couldn’t open workspace',
+      close: 'Close',
       settingsTitle: 'Default workspace',
       settingsDescription: 'Start independent tasks without choosing a project. All default sessions share one directory.',
       rootDirectory: 'Default workspace directory',
@@ -84,6 +100,149 @@ window.__ModuleLoader__.load({
         throw new Error('Default workspace response did not contain a path.')
       }
       return payload.path
+    }
+
+    function buildWorkspaceMenu(workspaces, labels, busy, addAvailable) {
+      return {
+        items: [
+          {
+            id: DEFAULT_WORKSPACE_ID,
+            label: labels.defaultWorkspace,
+            disabled: busy
+          },
+          ...workspaces.map((workspace) => ({
+            id: workspace.workspaceId,
+            label: workspace.title,
+            disabled: busy
+          }))
+        ],
+        footer: addAvailable
+          ? [{ id: ADD_WORKSPACE_ID, label: labels.addWorkspace, disabled: busy }]
+          : []
+      }
+    }
+
+    async function createDefaultSession(ensure, sessions) {
+      const path = await ensure()
+      const sessionId = await sessions.create({ cwd: path })
+      sessions.open(sessionId)
+      return { path, sessionId }
+    }
+
+    function DefaultWorkspacePicker({
+      open,
+      anchorRef,
+      useWorkspaces,
+      selectedId,
+      onPick,
+      onClose,
+      createDefaultSession: startDefaultSession,
+      createWorkspace,
+      pickDirectory,
+      t
+    }) {
+      const workspaceSnapshot = useWorkspaces((state) => state)
+      const [busy, setBusy] = React.useState(false)
+      const busyRef = React.useRef(false)
+      const [error, setError] = React.useState(null)
+
+      const labels = {
+        defaultWorkspace: t('defaultWorkspace'),
+        addWorkspace: t('addWorkspace')
+      }
+      const menu = buildWorkspaceMenu(
+        workspaceSnapshot.items,
+        labels,
+        busy,
+        typeof pickDirectory === 'function'
+      )
+      const items = menu.items.map((item) => ({
+        ...item,
+        icon: item.id === DEFAULT_WORKSPACE_ID
+          ? React.createElement(IconNewChatOutline16, { size: 16 })
+          : React.createElement(IconFolderClose16, { size: 16 })
+      }))
+      const footer = menu.footer.map((item) => ({
+        ...item,
+        icon: React.createElement(IconPlusOutline16, { size: 16 })
+      }))
+      const getAnchorRect = React.useCallback(
+        () => anchorRef?.current?.getBoundingClientRect() ?? null,
+        [anchorRef]
+      )
+      const fail = (reason) => {
+        setError(reason instanceof Error ? reason.message : String(reason))
+      }
+      const run = async (operation) => {
+        if (busyRef.current) return
+        busyRef.current = true
+        setBusy(true)
+        setError(null)
+        onClose()
+        try {
+          await operation()
+        } catch (reason) {
+          fail(reason)
+        } finally {
+          busyRef.current = false
+          setBusy(false)
+        }
+      }
+      const handleSelect = (id) => {
+        if (busyRef.current) return
+        if (id === DEFAULT_WORKSPACE_ID) {
+          void run(() => startDefaultSession())
+          return
+        }
+        if (id === ADD_WORKSPACE_ID) {
+          void run(async () => {
+            const path = await pickDirectory()
+            if (path === null) return
+            const workspace = await createWorkspace({ path })
+            onPick(workspace.workspaceId)
+          })
+          return
+        }
+        onClose()
+        onPick(id)
+      }
+
+      return React.createElement(
+        React.Fragment,
+        null,
+        React.createElement(Menu, {
+          open,
+          anchor: null,
+          items,
+          footer,
+          selectedId,
+          onSelect: handleSelect,
+          onClose,
+          portal: true,
+          getAnchorRect
+        }),
+        React.createElement(
+          Modal,
+          {
+            open: error !== null,
+            onClose: () => setError(null),
+            closeLabel: t('close'),
+            title: t('operationFailed'),
+            footer: React.createElement(
+              Button,
+              { variant: 'primary', onClick: () => setError(null) },
+              t('close')
+            )
+          },
+          error === null
+            ? null
+            : React.createElement(
+                'div',
+                { className: 'dshTemporaryWorkspaceError', role: 'alert' },
+                error
+              )
+        )
+      )
     }
 
     function TemporaryWorkspaceSettingsCard({ scope, t }) {
@@ -191,7 +350,14 @@ window.__ModuleLoader__.load({
       )
     }
 
-    const inject = ['slots', 'locale', 'settingsScope']
+    const inject = [
+      'slots',
+      'locale',
+      'settingsScope',
+      'sessions',
+      'workspaces',
+      'uiWorkspace'
+    ]
 
     function apply(ctx) {
       installStyles()
@@ -201,27 +367,25 @@ window.__ModuleLoader__.load({
       )
       const t = ctx.locale.bind(NS)
       const scope = ctx.settingsScope.bind({ namespace: SETTINGS_NAMESPACE })
-      const source = (name) => ({
-        name,
-        id: 'default',
-        order: 10,
-        activation: 'submit',
-        create: () => ensureDefaultWorkspace(),
-        label: () => t('defaultWorkspace')
-      })
+      const sessions = ctx.get('sessions')
+      const workspaces = ctx.get('workspaces')
+      const uiWorkspace = ctx.get('uiWorkspace')
 
-      ctx.slots.inject(
-        'conversation.hero.workspace.createSource',
-        () => ctx.slots.inject('sidebar.workspaces.createSource', function* () {
-          yield ctx.slots.register(
-            source('conversation.hero.workspace.createSource'),
-            () => null
-          )
-          yield ctx.slots.register(
-            source('sidebar.workspaces.createSource'),
-            () => null
-          )
-        })
+      ctx.slots.inject('conversation.hero.workspace', () =>
+        ctx.slots.register(
+          {
+            name: 'conversation.hero.workspace',
+            priority: -10,
+            inject: () => ({
+              createDefaultSession: () =>
+                createDefaultSession(() => ensureDefaultWorkspace(), sessions),
+              createWorkspace: (input) => workspaces.create(input),
+              pickDirectory: () => uiWorkspace.pickDirectory()
+            }),
+            locale: NS
+          },
+          DefaultWorkspacePicker
+        )
       )
 
       ctx.slots.inject('settings.plugin.item', () =>
@@ -239,6 +403,9 @@ window.__ModuleLoader__.load({
 
     exports.apply = apply
     exports.inject = inject
+    exports.buildWorkspaceMenu = buildWorkspaceMenu
+    exports.createDefaultSession = createDefaultSession
+    exports.DefaultWorkspacePicker = DefaultWorkspacePicker
     exports.ensureDefaultWorkspace = ensureDefaultWorkspace
     exports.TemporaryWorkspaceSettingsCard = TemporaryWorkspaceSettingsCard
     return module.exports

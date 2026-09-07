@@ -58,6 +58,17 @@ async function loadClientBundle(fetchImpl = async () => {
   const registration = await loadClientRegistration(fetchImpl)
   return registration.factory((id) => {
     if (id === 'react') return React
+    if (id === '@deepseek-ai/dsh-client-ui-primitives') {
+      const component = () => null
+      return {
+        Button: component,
+        IconFolderClose16: component,
+        IconNewChatOutline16: component,
+        IconPlusOutline16: component,
+        Menu: component,
+        Modal: component
+      }
+    }
     throw new Error(`unexpected client dependency: ${id}`)
   })
 }
@@ -104,7 +115,24 @@ function createClientContextFixture(entries) {
     set: vi.fn(async () => {}),
     unset: vi.fn(async () => {})
   }
+  const sessions = {
+    create: vi.fn(async () => 'session-1'),
+    open: vi.fn()
+  }
+  const workspaces = {
+    pickDirectory: vi.fn(async () => null),
+    create: vi.fn(async ({ path: directory }) => ({ workspaceId: directory }))
+  }
+  const uiWorkspace = {
+    pickDirectory: vi.fn(async () => null)
+  }
   return {
+    get: vi.fn((name) => {
+      if (name === 'sessions') return sessions
+      if (name === 'workspaces') return workspaces
+      if (name === 'uiWorkspace') return uiWorkspace
+      throw new Error(`unexpected service: ${name}`)
+    }),
     slots: {
       inject(_name, register) {
         const result = register()
@@ -128,14 +156,9 @@ function createClientContextFixture(entries) {
         return scope
       }
     },
-    sessions: {
-      create: vi.fn(async () => 'session-1'),
-      open: vi.fn()
-    },
-    workspaces: {
-      pickDirectory: vi.fn(async () => null),
-      create: vi.fn(async ({ path: directory }) => ({ workspaceId: directory }))
-    },
+    sessions,
+    workspaces,
+    uiWorkspace,
     effect: (install) => install()
   }
 }
@@ -294,6 +317,81 @@ describe('temporary workspace client plugin', () => {
     ).rejects.toThrow('did not contain a path')
   })
 
+  it('registers the standard conversation workspace picker', async () => {
+    const client = await loadClientBundle()
+    const entries = []
+    const ctx = createClientContextFixture(entries)
+
+    client.apply(ctx)
+
+    const picker = entries.find(
+      (entry) => entry.options.name === 'conversation.hero.workspace'
+    )
+    expect(picker).toBeDefined()
+    expect(picker.options.children).toBeUndefined()
+    expect(entries.some((entry) => entry.options.name.endsWith('.createSource'))).toBe(false)
+  })
+
+  it('builds a menu with the default item, real workspaces, and add footer', async () => {
+    const client = await loadClientBundle()
+
+    expect(client.buildWorkspaceMenu(
+      [{ workspaceId: 'ws-1', title: 'Project A' }],
+      { defaultWorkspace: '默认执行目录', addWorkspace: '添加工作区…' },
+      false,
+      true
+    )).toEqual({
+      items: [
+        { id: 'default', label: '默认执行目录', disabled: false },
+        { id: 'ws-1', label: 'Project A', disabled: false }
+      ],
+      footer: [{ id: 'add-workspace', label: '添加工作区…', disabled: false }]
+    })
+  })
+
+  it('creates and opens an ungrouped default session after ensuring its directory', async () => {
+    const client = await loadClientBundle()
+    const order = []
+    const result = await client.createDefaultSession(
+      async () => {
+        order.push('ensure')
+        return '/tmp/default-workspace'
+      },
+      {
+        create: async (input) => {
+          order.push(['create', input])
+          return 'session-1'
+        },
+        open: (id) => order.push(['open', id])
+      }
+    )
+
+    expect(result).toEqual({ path: '/tmp/default-workspace', sessionId: 'session-1' })
+    expect(order).toEqual([
+      'ensure',
+      ['create', { cwd: '/tmp/default-workspace' }],
+      ['open', 'session-1']
+    ])
+  })
+
+  it('does not create or open a session when ensuring the default directory fails', async () => {
+    const client = await loadClientBundle()
+    const sessions = {
+      create: vi.fn(),
+      open: vi.fn()
+    }
+
+    await expect(client.createDefaultSession(
+      async () => {
+        throw new Error('disk is read-only')
+      },
+      sessions
+    )).rejects.toThrow('disk is read-only')
+
+    expect(sessions.create).not.toHaveBeenCalled()
+    expect(sessions.open).not.toHaveBeenCalled()
+  })
+
   it('registers locale dictionaries and the settings card', async () => {
     const client = await loadClientBundle()
     const entries = []
@@ -323,7 +421,7 @@ describe('temporary workspace client plugin', () => {
     )).toBe(true)
   })
 
-  it('registers the default directory as one deferred source on both workspace surfaces', async () => {
+  it('injects default-session and real-workspace actions into the standard picker', async () => {
     const fetchCalls = []
     const client = await loadClientBundle(async (...args) => {
       fetchCalls.push(args)
@@ -338,37 +436,28 @@ describe('temporary workspace client plugin', () => {
 
     client.apply(ctx)
 
-    const sources = entries.filter((entry) =>
-      entry.options.name.endsWith('.createSource')
+    const [picker] = entries.filter(
+      (entry) => entry.options.name === 'conversation.hero.workspace'
     )
-    expect(sources.map(({ options }) => ({
-      name: options.name,
-      id: options.id,
-      activation: options.activation,
-      label: options.label()
-    }))).toEqual([
-      {
-        name: 'conversation.hero.workspace.createSource',
-        id: 'default',
-        activation: 'submit',
-        label: 'defaultWorkspace'
-      },
-      {
-        name: 'sidebar.workspaces.createSource',
-        id: 'default',
-        activation: 'submit',
-        label: 'defaultWorkspace'
-      }
-    ])
+    const actions = picker.options.inject()
 
-    await expect(sources[0].options.create()).resolves.toBe(
-      '/tmp/default-workspace'
-    )
+    await expect(actions.createDefaultSession()).resolves.toEqual({
+      path: '/tmp/default-workspace',
+      sessionId: 'session-1'
+    })
     expect(fetchCalls).toEqual([[
       '/dsh-desktop/default-workspace/ensure',
       { method: 'POST', headers: { accept: 'application/json' } }
     ]])
-    expect(ctx.sessions.create).not.toHaveBeenCalled()
-    expect(ctx.sessions.open).not.toHaveBeenCalled()
+    expect(ctx.sessions.create).toHaveBeenCalledWith({ cwd: '/tmp/default-workspace' })
+    expect(ctx.sessions.open).toHaveBeenCalledWith('session-1')
+    expect(ctx.workspaces.create).not.toHaveBeenCalled()
+
+    ctx.uiWorkspace.pickDirectory.mockResolvedValueOnce('/tmp/project')
+    await expect(actions.pickDirectory()).resolves.toBe('/tmp/project')
+    await expect(actions.createWorkspace({ path: '/tmp/project' })).resolves.toEqual({
+      workspaceId: '/tmp/project'
+    })
+    expect(ctx.workspaces.create).toHaveBeenCalledWith({ path: '/tmp/project' })
   })
 })
